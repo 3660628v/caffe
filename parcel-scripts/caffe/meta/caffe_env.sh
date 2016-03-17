@@ -1,0 +1,7 @@
+#!/bin/bash
+
+if [ -n "${JAVA_LIBRARY_PATH}" ]; then
+  export JAVA_LIBRARY_PATH="${JAVA_LIBRARY_PATH}:$PARCELS_ROOT/$PARCEL_DIRNAME/lib"
+else
+  export JAVA_LIBRARY_PATH="$PARCELS_ROOT/$PARCEL_DIRNAME/lib"
+fi

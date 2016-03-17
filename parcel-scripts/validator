@@ -1,0 +1,2 @@
+#!/bin/bash
+LC_ALL=en_US.UTF-8 java -jar $(dirname $(readlink -f $0))/cm_ext/validator/target/validator.jar $@

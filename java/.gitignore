@@ -1,0 +1,7 @@
+target/
+src/main/generated/
+
+# Generated javah
+caffe/com_htc_speedo_caffe_*.h
+caffe/libcaffe_jni.so
+caffe/libcaffe_jni.jnilib

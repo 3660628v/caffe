@@ -335,6 +335,42 @@ class DataLayerTest : public MultiDeviceTest<TypeParam> {
     }
   }
 
+  void TestReadBatchSize() {
+    LayerParameter param;
+    DataParameter* data_param = param.mutable_data_param();
+    data_param->set_batch_size(5);
+    data_param->set_source(filename_->c_str());
+    data_param->set_backend(backend_);
+
+    DataLayer<Dtype> layer(param);
+    layer.SetUp(blob_bottom_vec_, blob_top_vec_);
+
+    for (int iter = 0; iter < 1; ++iter) {
+      layer.set_batch_size(10);
+      layer.Forward(blob_bottom_vec_, blob_top_vec_);
+      for (int i = 0; i < 10; ++i) {
+        EXPECT_EQ(i % 5, blob_top_label_->cpu_data()[i]);
+      }
+      for (int i = 0; i < 10; ++i) {
+        for (int j = 0; j < 24; ++j) {
+          EXPECT_EQ(i % 5, blob_top_data_->cpu_data()[i * 24 + j])
+              << "debug: iter " << iter << " i " << i << " j " << j;
+        }
+      }
+      layer.set_batch_size(1);
+      // the db is fetch by 9 times plus the 1 more in prefetch,
+      // so db pointer is reset when next set_batch_size is called
+      for (int i = 0; i < 9; ++i) {
+        layer.Forward(blob_bottom_vec_, blob_top_vec_);
+        EXPECT_EQ(i % 5, blob_top_label_->cpu_data()[0]);
+        for (int j = 0; j < 24; ++j) {
+          EXPECT_EQ(i % 5, blob_top_data_->cpu_data()[j])
+              << "debug: iter " << iter << " i " << i << " j " << j;
+        }
+      }
+    }
+  }
+
   virtual ~DataLayerTest() { delete blob_top_data_; delete blob_top_label_; }
 
   DataParameter_DB backend_;
@@ -386,6 +422,12 @@ TYPED_TEST(DataLayerTest, TestReadCropTestLevelDB) {
   this->TestReadCrop(TEST);
 }
 
+TYPED_TEST(DataLayerTest, TestSetBatchSizeLevelDB) {
+  const bool unique_pixels = false;  // all pixels the same; images different
+  this->Fill(unique_pixels, DataParameter_DB_LEVELDB);
+  this->TestReadBatchSize();
+}
+
 TYPED_TEST(DataLayerTest, TestReadLMDB) {
   const bool unique_pixels = false;  // all pixels the same; images different
   this->Fill(unique_pixels, DataParameter_DB_LMDB);
@@ -422,6 +464,12 @@ TYPED_TEST(DataLayerTest, TestReadCropTestLMDB) {
   const bool unique_pixels = true;  // all images the same; pixels different
   this->Fill(unique_pixels, DataParameter_DB_LMDB);
   this->TestReadCrop(TEST);
+}
+
+TYPED_TEST(DataLayerTest, TestSetBatchSizeLMDB) {
+  const bool unique_pixels = false;  // all pixels the same; images different
+  this->Fill(unique_pixels, DataParameter_DB_LMDB);
+  this->TestReadBatchSize();
 }
 
 }  // namespace caffe

@@ -1,0 +1,17 @@
+#!/bin/bash -e
+# Configuration for cloudera manager extention tools
+
+SCRIPT_PATH=$(dirname $(readlink -f $0))
+
+# install required dependencies
+sudo apt-get install -y git tar gzip maven
+
+cd $SCRIPT_PATH
+if [ -d "cm_ext" ]; then
+  cd cm_ext
+  git pull
+else
+  git clone https://github.com/cloudera/cm_ext.git
+  cd cm_ext
+fi
+LC_ALL=en_US.UTF-8 mvn clean package -DskipTests

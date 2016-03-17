@@ -163,15 +163,17 @@ void Solver<Dtype>::InitTestNets() {
 }
 
 template <typename Dtype>
-void Solver<Dtype>::Step(int iters) {
+Dtype Solver<Dtype>::Step(int iters, bool compute_diff, bool update_diff) {
   vector<Blob<Dtype>*> bottom_vec;
   const int start_iter = iter_;
   const int stop_iter = iter_ + iters;
   int average_loss = this->param_.average_loss();
   vector<Dtype> losses;
   Dtype smoothed_loss = 0;
+  Dtype total_loss = 0;  // total loss for all training iters
 
   while (iter_ < stop_iter) {
+    if (compute_diff) {  // do not indent to avoid merge conflicts
     // zero-init the params
     net_->ClearParamDiffs();
     if (param_.test_interval() && iter_ % param_.test_interval() == 0
@@ -197,6 +199,8 @@ void Solver<Dtype>::Step(int iters) {
       smoothed_loss += (loss - losses[idx]) / average_loss;
       losses[idx] = loss;
     }
+    // accumulate loss for JNI output
+    total_loss += loss;
     if (display) {
       LOG(INFO) << "Iteration " << iter_ << ", loss = " << smoothed_loss;
       const vector<Blob<Dtype>*>& result = net_->output_blobs();
@@ -219,7 +223,10 @@ void Solver<Dtype>::Step(int iters) {
         }
       }
     }
+    }
+    if (update_diff) {
     ApplyUpdate();
+    }
 
     // Increment the internal iter_ counter -- its value should always indicate
     // the number of times the weights have been updated.
@@ -230,6 +237,7 @@ void Solver<Dtype>::Step(int iters) {
       Snapshot();
     }
   }
+  return total_loss / iters;
 }
 
 template <typename Dtype>
@@ -277,7 +285,7 @@ void Solver<Dtype>::TestAll() {
 }
 
 template <typename Dtype>
-void Solver<Dtype>::Test(const int test_net_id) {
+Dtype Solver<Dtype>::Test(const int test_net_id) {
   LOG(INFO) << "Iteration " << iter_
             << ", Testing net (#" << test_net_id << ")";
   CHECK_NOTNULL(test_nets_[test_net_id].get())->
@@ -330,6 +338,7 @@ void Solver<Dtype>::Test(const int test_net_id) {
     LOG(INFO) << "    Test net output #" << i << ": " << output_name << " = "
         << mean_score << loss_msg_stream.str();
   }
+  return test_score[0] / param_.test_iter(test_net_id);
 }
 
 

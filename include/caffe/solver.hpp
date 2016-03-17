@@ -6,6 +6,8 @@
 
 #include "caffe/net.hpp"
 
+template <typename Dtype> class JNISolver;
+
 namespace caffe {
 
 /**
@@ -16,6 +18,7 @@ namespace caffe {
  */
 template <typename Dtype>
 class Solver {
+  friend class JNISolver<Dtype>;
  public:
   explicit Solver(const SolverParameter& param);
   explicit Solver(const string& param_file);
@@ -26,7 +29,9 @@ class Solver {
   // in a non-zero iter number to resume training for a pre-trained net.
   virtual void Solve(const char* resume_file = NULL);
   inline void Solve(const string resume_file) { Solve(resume_file.c_str()); }
-  void Step(int iters);
+  // If compute_diff, do forward and backward
+  // If update_diff, update delta to net
+  Dtype Step(int iters, bool compute_diff = true, bool update_diff = true);
   // The Restore method simply dispatches to one of the
   // RestoreSolverStateFrom___ protected methods. You should implement these
   // methods to restore the state from the appropriate snapshot type.
@@ -51,7 +56,7 @@ class Solver {
   string SnapshotToHDF5();
   // The test routine
   void TestAll();
-  void Test(const int test_net_id = 0);
+  Dtype Test(const int test_net_id = 0);
   virtual void SnapshotSolverState(const string& model_filename) = 0;
   virtual void RestoreSolverStateFromHDF5(const string& state_file) = 0;
   virtual void RestoreSolverStateFromBinaryProto(const string& state_file) = 0;

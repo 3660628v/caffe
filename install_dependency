@@ -1,0 +1,74 @@
+#!/bin/bash -e
+
+SUDO=$(which sudo || echo)
+
+# Install dependencies and build tools
+$SUDO apt-get update
+$SUDO apt-get install -y libleveldb-dev libsnappy-dev libopencv-dev libboost-all-dev libhdf5-serial-dev gfortran cmake maven wget git
+
+cd /tmp
+
+# Install protobuf if not available
+command -v protoc >/dev/null 2>&1 || {
+wget https://github.com/google/protobuf/releases/download/v2.5.0/protobuf-2.5.0.tar.gz
+tar -vxf protobuf-2.5.0.tar.gz
+cd protobuf-2.5.0
+./configure
+make
+$SUDO make install
+cd ..
+}
+
+# OpenBLAS
+if [ ! -e "/usr/lib/libgfortran.so" ]
+then
+  $SUDO ln -s /usr/lib/x86_64-linux-gnu/libgfortran.so.3 /usr/lib/libgfortran.so
+fi
+wget https://github.com/xianyi/OpenBLAS/archive/master.zip -O OpenBLAS.zip
+unzip OpenBLAS.zip
+cd OpenBLAS-master
+make
+$SUDO make install
+$SUDO ln -s /opt/OpenBLAS/lib/libopenblas.so* /usr/lib/
+$SUDO ln -s /opt/OpenBLAS/include/* /usr/include/
+cd ..
+
+# glog
+wget https://github.com/google/glog/archive/v0.3.3.tar.gz
+tar zxvf v0.3.3.tar.gz
+cd glog-0.3.3
+./configure
+make && $SUDO make install
+cd ..
+
+# gflags
+wget https://github.com/gflags/gflags/archive/v2.1.2.zip
+unzip v2.1.2.zip
+cd gflags-2.1.2
+mkdir build && cd build
+CXXFLAGS="-fPIC" cmake ..
+CXXFLAGS="-fPIC" make VERBOSE=1
+CXXFLAGS="-fPIC" $SUDO make install
+cd ../..
+
+# lmdb
+wget https://github.com/clibs/lmdb/archive/0.9.15.tar.gz
+tar zxvf 0.9.15.tar.gz
+cd lmdb-0.9.15
+make && $SUDO make install
+cd ..
+
+$SUDO ldconfig
+
+# java 8
+which javah || {
+  $SUDO apt-get install -y python-software-properties software-properties-common
+  echo oracle-java8-installer shared/accepted-oracle-license-v1-1 select true | $SUDO debconf-set-selections
+  $SUDO add-apt-repository -y ppa:webupd8team/java
+  $SUDO apt-get update
+  $SUDO apt-get install -y oracle-java8-installer
+  $SUDO update-java-alternatives -s java-8-oracle
+  $SUDO apt-get install -y oracle-java8-set-default
+  # set java home
+  $SUDO bash -c "echo 'export JAVA_HOME=/usr/lib/jvm/java-8-oracle' >> /etc/profile"
+}

@@ -92,11 +92,16 @@ class DataLayer : public BasePrefetchingDataLayer<Dtype> {
   virtual inline int MinTopBlobs() const { return 1; }
   virtual inline int MaxTopBlobs() const { return 2; }
 
+  void set_batch_size(int new_size);
+
  protected:
   virtual void InternalThreadEntry();
 
   shared_ptr<db::DB> db_;
   shared_ptr<db::Cursor> cursor_;
+
+ private:
+  int original_batch_size_;
 };
 
 /**

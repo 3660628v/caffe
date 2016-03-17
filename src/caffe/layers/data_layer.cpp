@@ -31,13 +31,14 @@ void DataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
 
   // Check if we should randomly skip a few data points
   if (this->layer_param_.data_param().rand_skip()) {
-    unsigned int skip = caffe_rng_rand() %
+    unsigned int skip =  // caffe_rng_rand() %
                         this->layer_param_.data_param().rand_skip();
     LOG(INFO) << "Skipping first " << skip << " data points.";
     while (skip-- > 0) {
       cursor_->Next();
     }
   }
+  if (!cursor_->valid()) cursor_->SeekToFirst();
   // Read a data point, to initialize the prefetch and top blobs.
   Datum datum;
   datum.ParseFromString(cursor_->value());
@@ -58,6 +59,7 @@ void DataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
     top[1]->Reshape(label_shape);
     this->prefetch_label_.Reshape(label_shape);
   }
+  this->original_batch_size_ = this->layer_param_.data_param().batch_size();
 }
 
 // This function is used to create a thread that prefetches the data.
@@ -118,6 +120,26 @@ void DataLayer<Dtype>::InternalThreadEntry() {
   DLOG(INFO) << "Prefetch batch: " << batch_timer.MilliSeconds() << " ms.";
   DLOG(INFO) << "     Read time: " << read_time / 1000 << " ms.";
   DLOG(INFO) << "Transform time: " << trans_time / 1000 << " ms.";
+}
+
+template <typename Dtype>
+void DataLayer<Dtype>::set_batch_size(int new_size) {
+  CHECK_GE(new_size, 0);
+  if (new_size == 0) new_size = this->original_batch_size_;
+  // if the batch size is already the new_size, do nothing
+  if (this->layer_param_.data_param().batch_size() == new_size) return;
+  // wait for the prefetching thread to stop to avoid con-current i/o
+  this->JoinPrefetchThread();
+  // set to new batch size
+  this->layer_param_.mutable_data_param()->set_batch_size(new_size);
+  // reshape label (data is always reshaped in InternalThreadEntry)
+  if (this->output_labels_) {
+    // create label_shape in the same way as DataLayerSetUp
+    vector<int> label_shape(1, new_size);
+    this->prefetch_label_.Reshape(label_shape);
+  }
+  // start a new prefetching thread
+  this->CreatePrefetchThread();
 }
 
 INSTANTIATE_CLASS(DataLayer);

@@ -33,6 +33,8 @@ LIB_BUILD_DIR := $(BUILD_DIR)/lib
 STATIC_NAME := $(LIB_BUILD_DIR)/lib$(PROJECT).a
 DYNAMIC_NAME := $(LIB_BUILD_DIR)/lib$(PROJECT).so
 
+PREFIX ?= /usr
+
 ##############################
 # Get all source files
 ##############################
@@ -66,6 +68,7 @@ NONGEN_CXX_SRCS := $(shell find \
 	include/$(PROJECT) \
 	python/$(PROJECT) \
 	matlab/+$(PROJECT)/private \
+	java/$(PROJECT) \
 	examples \
 	tools \
 	-name "*.cpp" -or -name "*.hpp" -or -name "*.cu" -or -name "*.cuh")
@@ -85,6 +88,16 @@ ifneq ($(MATLAB_DIR),)
 	MAT_SO_EXT := $(shell $(MATLAB_DIR)/bin/mexext)
 endif
 MAT$(PROJECT)_SO := matlab/+$(PROJECT)/private/$(PROJECT)_.$(MAT_SO_EXT)
+# JAVA$(PROJECT)_SRC is the java wrapper for $(PROJECT)
+JAVA$(PROJECT)_SRCS := $(shell find java/$(PROJECT) -name "*.cpp")
+JAVA$(PROJECT)_OBJS := $(addprefix $(BUILD_DIR)/, ${JAVA$(PROJECT)_SRCS:.cpp=.o})
+JAVA$(PROJECT)_JAVA_SRCS := $(shell find java/src/main/java -name "*.java") java/pom.xml
+JAVA$(PROJECT)_LIB_LINUX := $(LIB_BUILD_DIR)/lib$(PROJECT)_jni.so
+JAVA$(PROJECT)_LIB_MAC := $(LIB_BUILD_DIR)/lib$(PROJECT)_jni.jnilib
+# Java generated JNI headers
+JAVA$(PROJECT)_H := java/$(PROJECT)/com_htc_speedo_caffe_Solver.h java/$(PROJECT)/com_htc_speedo_caffe_NetParameterOperation.h
+# Used to create one single rule to generate headers
+JAVA$(PROJECT)_HEADER := $(BUILD_DIR)/java/.header
 
 ##############################
 # Derive generated files
@@ -99,6 +112,8 @@ PY_PROTO_BUILD_DIR := python/$(PROJECT)/proto
 PY_PROTO_INIT := python/$(PROJECT)/proto/__init__.py
 PROTO_GEN_PY := $(foreach file,${PROTO_SRCS:.proto=_pb2.py}, \
 		$(PY_PROTO_BUILD_DIR)/$(notdir $(file)))
+JAVA_PROTO_BUILD_DIR := java/src/main/generated
+JAVA_PROTO_GEN_FILE := $(JAVA_PROTO_BUILD_DIR)/caffe/Caffe.java
 # The objects corresponding to the source files
 # These objects will be linked into the final shared library, so we
 # exclude the tool, example, and test objects.
@@ -118,7 +133,7 @@ GTEST_OBJ := $(addprefix $(BUILD_DIR)/, ${GTEST_SRC:.cpp=.o})
 EXAMPLE_OBJS := $(addprefix $(BUILD_DIR)/, ${EXAMPLE_SRCS:.cpp=.o})
 # Output files for automatic dependency generation
 DEPS := ${CXX_OBJS:.o=.d} ${CU_OBJS:.o=.d} ${TEST_CXX_OBJS:.o=.d} \
-	${TEST_CU_OBJS:.o=.d} $(BUILD_DIR)/${MAT$(PROJECT)_SO:.$(MAT_SO_EXT)=.d}
+	${TEST_CU_OBJS:.o=.d} $(BUILD_DIR)/${MAT$(PROJECT)_SO:.$(MAT_SO_EXT)=.d} ${JAVA$(PROJECT)_OBJS:.o=.d}
 # tool, example, and test bins
 TOOL_BINS := ${TOOL_OBJS:.o=.bin}
 EXAMPLE_BINS := ${EXAMPLE_OBJS:.o=.bin}
@@ -154,6 +169,11 @@ NONEMPTY_WARN_REPORT := $(BUILD_DIR)/$(WARNS_EXT)
 ##############################
 # Derive include and lib directories
 ##############################
+# If nvcc not exist, always enable CPU mode
+ifeq ("$(which nvcc)", "")
+	CPU_ONLY := 1
+endif
+
 CUDA_INCLUDE_DIR := $(CUDA_DIR)/include
 
 CUDA_LIB_DIR :=
@@ -189,7 +209,7 @@ endif
 ALL_BUILD_DIRS := $(sort $(BUILD_DIR) $(addprefix $(BUILD_DIR)/, $(SRC_DIRS)) \
 	$(addprefix $(BUILD_DIR)/cuda/, $(SRC_DIRS)) \
 	$(LIB_BUILD_DIR) $(TEST_BIN_DIR) $(PY_PROTO_BUILD_DIR) $(LINT_OUTPUT_DIR) \
-	$(DISTRIBUTE_SUBDIRS) $(PROTO_BUILD_INCLUDE_DIR))
+	$(DISTRIBUTE_SUBDIRS) $(PROTO_BUILD_INCLUDE_DIR) $(JAVA_PROTO_BUILD_DIR))
 
 ##############################
 # Set directory for Doxygen-generated documentation
@@ -234,6 +254,8 @@ ifeq ($(LINUX), 1)
 	# boost::thread is reasonably called boost_thread (compare OS X)
 	# We will also explicitly add stdc++ to the link target.
 	LIBRARIES += boost_thread stdc++
+	JAVA$(PROJECT)_LIB := $(JAVA$(PROJECT)_LIB_LINUX)
+	JAVA$(PROJECT)_FLAG := -shared
 endif
 
 # OS X:
@@ -257,6 +279,8 @@ ifeq ($(OSX), 1)
 	# we need to explicitly ask for the rpath to be obeyed
 	DYNAMIC_FLAGS := -install_name @rpath/libcaffe.so
 	ORIGIN := @loader_path
+	JAVA$(PROJECT)_LIB := $(JAVA$(PROJECT)_LIB_MAC)
+	JAVA$(PROJECT)_FLAG := -dynamiclib -lglog -lprotobuf
 else
 	ORIGIN := \$$ORIGIN
 endif
@@ -365,6 +389,17 @@ LDFLAGS += $(foreach librarydir,$(LIBRARY_DIRS),-L$(librarydir)) $(PKG_CONFIG) \
 		$(foreach library,$(LIBRARIES),-l$(library))
 PYTHON_LDFLAGS := $(LDFLAGS) $(foreach library,$(PYTHON_LIBRARIES),-l$(library))
 
+# Java Configurations
+JAVA_INCLUDE := -pthread -fPIC $(COMMON_FLAGS) $(WARNINGS)
+ifeq ($(LINUX), 1)
+	JAVA_HOME ?= /usr/lib/jvm/java-6-oracle
+	JAVA_INCLUDE += -I$(JAVA_HOME)/include -I$(JAVA_HOME)/include/linux
+else ifeq ($(OSX), 1)
+	# Since OSX 10.5, JAVA_HOME is set to the symbolic of /usr/libexec/java_home
+	JAVA_HOME ?= $(shell echo $(/usr/libexec/java_home))
+	JAVA_INCLUDE += -I$(JAVA_HOME)/include -I$(JAVA_HOME)/include/darwin
+endif
+
 # 'superclean' target recursively* deletes all files ending with an extension
 # in $(SUPERCLEAN_EXTS) below.  This may be useful if you've built older
 # versions of Caffe that do not place all generated files in a location known
@@ -387,7 +422,7 @@ endif
 # Define build targets
 ##############################
 .PHONY: all test clean docs linecount lint lintclean tools examples $(DIST_ALIASES) \
-	py mat py$(PROJECT) mat$(PROJECT) proto runtest \
+	py mat py$(PROJECT) mat$(PROJECT) java java$(PROJECT) proto runtest javatest javainstall \
 	superclean supercleanlist supercleanfiles warn everything
 
 all: $(STATIC_NAME) $(DYNAMIC_NAME) tools examples
@@ -442,12 +477,33 @@ py: $(PY$(PROJECT)_SO) $(PROTO_GEN_PY)
 $(PY$(PROJECT)_SO): $(PY$(PROJECT)_SRC) $(PY$(PROJECT)_HXX) | $(DYNAMIC_NAME)
 	@ echo CXX/LD -o $@ $<
 	$(Q)$(CXX) -shared -o $@ $(PY$(PROJECT)_SRC) \
-		-o $@ $(LINKFLAGS) -l$(PROJECT) $(PYTHON_LDFLAGS) \
+		-o $@ $(LINKFLAGS) -Lbuild/lib -l$(PROJECT) $(PYTHON_LDFLAGS) \
 		-Wl,-rpath,$(ORIGIN)/../../build/lib
 
 mat$(PROJECT): mat
 
 mat: $(MAT$(PROJECT)_SO)
+
+java$(PROJECT): java
+
+java: $(JAVA$(PROJECT)_LIB)
+
+javatest: java
+	cd java; mvn test
+
+javainstall: java
+	cd java; mvn source:jar javadoc:jar install -DskipTests
+
+$(JAVA$(PROJECT)_LIB): $(DYNAMIC_NAME) $(JAVA$(PROJECT)_H) $(JAVA$(PROJECT)_OBJS)
+	@ echo LD -o $@
+	$(Q)$(CXX) $(JAVA$(PROJECT)_FLAG) -o $@ $(JAVA$(PROJECT)_OBJS) -Lbuild/lib -l$(PROJECT)
+
+$(JAVA$(PROJECT)_H): $(JAVA$(PROJECT)_HEADER)
+	$(Q)touch $@
+
+$(JAVA$(PROJECT)_HEADER): $(JAVA_PROTO_GEN_FILE) $(JAVA$(PROJECT)_JAVA_SRCS)
+	$(Q)touch $(JAVA$(PROJECT)_HEADER)
+	cd java; mvn compile native:javah
 
 $(MAT$(PROJECT)_SO): $(MAT$(PROJECT)_SRC) $(STATIC_NAME)
 	@ if [ -z "$(MATLAB_DIR)" ]; then \
@@ -470,7 +526,7 @@ runtest: $(TEST_ALL_BIN)
 
 pytest: py
 	cd python; python -m unittest discover -s caffe/test
-	
+
 mattest: mat
 	cd matlab; $(MATLAB_DIR)/bin/matlab -nodisplay -r 'caffe.run_tests(), exit()'
 
@@ -512,6 +568,12 @@ $(STATIC_NAME): $(OBJS) | $(LIB_BUILD_DIR)
 	@ echo AR -o $@
 	$(Q)ar rcs $@ $(OBJS)
 
+$(BUILD_DIR)/java/%.o: java/%.cpp $(JAVA$(PROJECT)_H) | $(ALL_BUILD_DIRS)
+	@ echo CXX\(JNI\) $<
+	$(Q)$(CXX) $< $(CXXFLAGS) $(JAVA_INCLUDE) -c -o $@ 2> $@.$(WARNS_EXT) \
+		|| (cat $@.$(WARNS_EXT); exit 1)
+	@ cat $@.$(WARNS_EXT)
+
 $(BUILD_DIR)/%.o: %.cpp | $(ALL_BUILD_DIRS)
 	@ echo CXX $<
 	$(Q)$(CXX) $< $(CXXFLAGS) -c -o $@ 2> $@.$(WARNS_EXT) \
@@ -537,19 +599,19 @@ $(TEST_ALL_BIN): $(TEST_MAIN_SRC) $(TEST_OBJS) $(GTEST_OBJ) \
 		| $(DYNAMIC_NAME) $(TEST_BIN_DIR)
 	@ echo CXX/LD -o $@ $<
 	$(Q)$(CXX) $(TEST_MAIN_SRC) $(TEST_OBJS) $(GTEST_OBJ) \
-		-o $@ $(LINKFLAGS) $(LDFLAGS) -l$(PROJECT) -Wl,-rpath,$(ORIGIN)/../lib
+		-o $@ $(LINKFLAGS) -Lbuild/lib $(LDFLAGS) -l$(PROJECT) -Wl,-rpath,$(ORIGIN)/../lib
 
 $(TEST_CU_BINS): $(TEST_BIN_DIR)/%.testbin: $(TEST_CU_BUILD_DIR)/%.o \
 	$(GTEST_OBJ) | $(DYNAMIC_NAME) $(TEST_BIN_DIR)
 	@ echo LD $<
 	$(Q)$(CXX) $(TEST_MAIN_SRC) $< $(GTEST_OBJ) \
-		-o $@ $(LINKFLAGS) $(LDFLAGS) -l$(PROJECT) -Wl,-rpath,$(ORIGIN)/../lib
+		-o $@ $(LINKFLAGS) -Lbuild/lib $(LDFLAGS) -l$(PROJECT) -Wl,-rpath,$(ORIGIN)/../lib
 
 $(TEST_CXX_BINS): $(TEST_BIN_DIR)/%.testbin: $(TEST_CXX_BUILD_DIR)/%.o \
 	$(GTEST_OBJ) | $(DYNAMIC_NAME) $(TEST_BIN_DIR)
 	@ echo LD $<
 	$(Q)$(CXX) $(TEST_MAIN_SRC) $< $(GTEST_OBJ) \
-		-o $@ $(LINKFLAGS) $(LDFLAGS) -l$(PROJECT) -Wl,-rpath,$(ORIGIN)/../lib
+		-o $@ $(LINKFLAGS) -Lbuild/lib $(LDFLAGS) -l$(PROJECT) -Wl,-rpath,$(ORIGIN)/../lib
 
 # Target for extension-less symlinks to tool binaries with extension '*.bin'.
 $(TOOL_BUILD_DIR)/%: $(TOOL_BUILD_DIR)/%.bin | $(TOOL_BUILD_DIR)
@@ -558,12 +620,12 @@ $(TOOL_BUILD_DIR)/%: $(TOOL_BUILD_DIR)/%.bin | $(TOOL_BUILD_DIR)
 
 $(TOOL_BINS): %.bin : %.o | $(DYNAMIC_NAME)
 	@ echo CXX/LD -o $@
-	$(Q)$(CXX) $< -o $@ $(LINKFLAGS) -l$(PROJECT) $(LDFLAGS) \
+	$(Q)$(CXX) $< -o $@ $(LINKFLAGS) -Lbuild/lib -l$(PROJECT) $(LDFLAGS) \
 		-Wl,-rpath,$(ORIGIN)/../lib
 
 $(EXAMPLE_BINS): %.bin : %.o | $(DYNAMIC_NAME)
 	@ echo CXX/LD -o $@
-	$(Q)$(CXX) $< -o $@ $(LINKFLAGS) -l$(PROJECT) $(LDFLAGS) \
+	$(Q)$(CXX) $< -o $@ $(LINKFLAGS) -Lbuild/lib -l$(PROJECT) $(LDFLAGS) \
 		-Wl,-rpath,$(ORIGIN)/../../lib
 
 proto: $(PROTO_GEN_CC) $(PROTO_GEN_HEADER)
@@ -578,6 +640,10 @@ $(PY_PROTO_BUILD_DIR)/%_pb2.py : $(PROTO_SRC_DIR)/%.proto \
 	@ echo PROTOC \(python\) $<
 	$(Q)protoc --proto_path=$(PROTO_SRC_DIR) --python_out=$(PY_PROTO_BUILD_DIR) $<
 
+$(JAVA_PROTO_GEN_FILE): $(PROTO_SRC_DIR)/caffe.proto | $(JAVA_PROTO_BUILD_DIR)
+	@ echo PROTOC \(java\) $<
+	$(Q)protoc --proto_path=$(PROTO_SRC_DIR) --java_out=$(JAVA_PROTO_BUILD_DIR) $<
+
 $(PY_PROTO_INIT): | $(PY_PROTO_BUILD_DIR)
 	touch $(PY_PROTO_INIT)
 
@@ -588,6 +654,7 @@ clean:
 	@- $(RM) -rf $(DISTRIBUTE_DIR)
 	@- $(RM) $(PY$(PROJECT)_SO)
 	@- $(RM) $(MAT$(PROJECT)_SO)
+	@- cd java; mvn clean -q
 
 supercleanfiles:
 	$(eval SUPERCLEAN_FILES := $(strip \
@@ -627,5 +694,29 @@ $(DISTRIBUTE_DIR): all py | $(DISTRIBUTE_SUBDIRS)
 	cp $(DYNAMIC_NAME) $(DISTRIBUTE_DIR)/lib
 	# add python - it's not the standard way, indeed...
 	cp -r python $(DISTRIBUTE_DIR)/python
+
+install: all java
+	# make include dir
+	mkdir -p $(DESTDIR)$(PREFIX)/include/caffe
+	rm -rf $(DESTDIR)$(PREFIX)/include/caffe
+	# add include
+	cp -r include/caffe $(DESTDIR)$(PREFIX)/include/
+	mkdir -p $(DESTDIR)$(PREFIX)/include/caffe/proto
+	install $(PROTO_GEN_HEADER_SRCS) $(DESTDIR)$(PREFIX)/include/caffe/proto
+	# make lib dir
+	mkdir -p $(DESTDIR)$(PREFIX)/lib
+	# add libraries
+	install -m 0755 $(STATIC_NAME) $(DESTDIR)$(PREFIX)/lib
+	install -m 0755 $(DYNAMIC_NAME) $(DESTDIR)$(PREFIX)/lib
+	# add java
+	install -m 0755 $(JAVA$(PROJECT)_LIB) $(DESTDIR)$(PREFIX)/lib
+
+uninstall:
+	# include
+	$(RM) -r $(DESTDIR)$(PREFIX)/include/caffe
+	# libraries
+	$(RM) $(DESTDIR)$(PREFIX)/lib/$(notdir $(STATIC_NAME)) $(DESTDIR)$(PREFIX)/lib/$(notdir $(DYNAMIC_NAME))
+	# java
+	$(RM) $(DESTDIR)$(PREFIX)/lib/$(notdir $(JAVA$(PROJECT)_LIB))
 
 -include $(DEPS)

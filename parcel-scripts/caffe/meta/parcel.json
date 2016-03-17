@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "name": "parcel_name",
+  "version": "parcel_version",
+  "setActiveSymlink": true,
+
+  "scripts": {
+    "defines": "caffe_env.sh"
+  },
+
+  "packages": [
+    {
+      "name":    "lama",
+      "version": "parcel_version"
+    }
+  ],
+
+  "components": [
+    {
+      "name":    "caffe-jni",
+      "version": "parcel_version",
+      "pkg_version": "parcel_version"
+    }
+  ],
+
+  "provides": [
+    "yarn-plugin"
+  ],
+
+  "users": { },
+
+  "groups": [ ]
+}
